@@ -34,20 +34,14 @@ export default defineConfig({
 	},
 	base: "./", // 设置打包路径
 	server: {
-		host: "10.1.195.184",
+		// host: "10.1.198.64",
 		port: 4000, // 设置服务启动端口号
 		open: true, // 设置服务启动时是否自动打开浏览器
 		cors: true, // 允许跨域
 		// 设置代理，根据我们项目实际情况配置
 		proxy: {
-			"/dingding": {
-				target: "https://oapi.dingtalk.com/",
-				changeOrigin: true,
-				secure: false,
-				rewrite: (path) => path.replace("/dingding/", "/"),
-			},
 			"/api": {
-				target: "http://172.31.131.16:6000/",//请求结果接口(可修改)
+				target: "http://172.31.131.16:8160/",//请求结果接口(可修改)
 				changeOrigin: true,
 				secure: false,
 				rewrite: (path) => path.replace("/api/", "/"),

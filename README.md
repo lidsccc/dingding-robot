@@ -6,7 +6,5 @@ This template should help get you started developing with Vue 3 in Vite. The tem
 
 - [VS Code](https://code.visualstudio.com/) + [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar)
 获取项目后 npm install
-可修改的地方有
-home.vue里,h5微应用的appkey,appsecret,agentId
-vite.config.js里,api的重定向(本地测试用)
+vite.config.js里,api的重定向(本地测试用).
 修改完毕后 npm run build 打包的dist文件夹即为目标文件

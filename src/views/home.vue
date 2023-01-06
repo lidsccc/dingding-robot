@@ -10,13 +10,11 @@
 			<div class="message" :class="item.type === 1 ? 'self' : 'robot'">
 				<div class="message-content box-shadow">
 					<div
-						v-if="item.msg"
 						class="message-content-msg"
 						@click="openUrl(item)"
 					>
 						{{ item.msg }}
 					</div>
-					<div v-else><van-loading color="#ffffff" /></div>
 				</div>
 			</div>
 		</div>
@@ -49,15 +47,18 @@
 				:class="isMouseDown ? 'buttomheadactive' : ''"
 			></div>
 			<p class="content">
-				{{ isMouseDown ? "正在聆听~" : "小港在~请摁住话筒后开始说话" }}
+				{{
+					isMouseDown
+						? "正在聆听~点击下方按钮结束说话"
+						: "小港在~请点击下方按钮开始说话"
+				}}
 			</p>
 			<div class="buttomIcon">
 				<div class="keyboard" @click="callKeyboard"></div>
-				<div
-					class="voiceButton"
-					@touchstart="start"
-					@touchend="stop"
-				></div>
+				<div v-if="isMouseDown" class="voiceButton" @click="stop">
+					结束对讲
+				</div>
+				<div v-else class="voiceButton" @click="start">开始对讲</div>
 			</div>
 		</div>
 	</van-action-sheet>
@@ -71,74 +72,33 @@ export default defineComponent({
 <script setup>
 import { computed, ref, watch, nextTick } from "vue";
 import * as dd from "dingtalk-jsapi";
-import CryptoJS from "crypto-js";
-import { gettoken, getJsapiTicket, getContent } from "@/api/index.js";
+import { getContent } from "@/api/index.js";
 import { useMainStore } from "@/store/modules/main.js";
 import robotHeader from "@/components/robotHeader.vue";
-import { showToast } from "vant";
 
 const mainStore = useMainStore();
-
-const gettokenHandle = async () => {
-	const res = await gettoken({
-		appkey: "ding04ky0fezpab84xu5",//h5微应用的appKey(可修改)
-		appsecret:
-			"XdgVFWJaK3W2ujt3_dn6fGaN2UIJp1DqhXUlUv19o95fD4Zt7RwyAVU00Ouqxch-", //h5微应用的appsecret(可修改)
-	});
-	if (res.data && res.data.errcode === 0) {
-		const { data } = res;
-		const result = await getJsapiTicket({
-			access_token: data.access_token,
-		});
-		if (result.data && result.data.errcode === 0) {
-			const timeStamp = new Date().getTime();
-			const url = location.href.split("#")[0];
-			const plainTex =
-				"jsapi_ticket=" +
-				result.data.ticket +
-				"&noncestr=" +
-				"test" +
-				"&timestamp=" +
-				timeStamp +
-				"&url=" +
-				url;
-			let signature = CryptoJS.SHA1(plainTex).toString();
-			dd.config({
-				agentId: "2168990176", // h5微应用的agentId(可修改)
-				corpId: mainStore.corpId, // 必填，企业ID
-				timeStamp: timeStamp, // 必填，生成签名的时间戳
-				nonceStr: "test", // 必填，生成签名的随机串
-				signature: signature, // 必填，签名
-				type: 0,
-				jsApiList: [
-					"device.audio.startRecord",
-					"device.audio.stopRecord",
-					"device.audio.translateVoice",
-				], // 必填，需要使用的jsapi列表，注意：不要带dd。
-			});
-			dd.error(function (err) {
-				showToast({
-					message: "获取签名失败",
-					position: "top",
-				});
-			});
-		} else {
-			showToast({
-				message: "获取tiket失败",
-				position: "top",
-			});
-			//获取tiket失败
+const ws = ref("");
+const arrs = ref("");
+const useWebSocket = () => {
+	ws.value = new WebSocket(
+		"wss://10.169.19.34:4590/tuling/ast/v2/ASTXVBVOPT3D5JBFSWA?appId=10101&bizId=ASTXVBVOPT3D5JBFSWA&bizName=WebSockets&lan=chin&sr=16000&bps=16&fs=4096"
+	);
+	ws.value.binaryType = "blob"; //传输的是 ArrayBuffer 类型的数据
+	ws.value.onopen = function () {
+		console.log("握手成功");
+		if (ws.value.readyState == 1) {
+			//ws进入连接状态，则每隔500毫秒发送一包数据
+			record.value.start();
 		}
-	} else {
-		showToast({
-			message: "获取access_token失败",
-			position: "top",
-		});
-		//获取access_token失败
-	}
+	};
+	ws.value.onmessage = function (msg) {
+		const _data = JSON.parse(msg.data);
+		arrs.value = _data.ws;
+	};
+	ws.value.onerror = function (err) {
+		console.info(err, "错误");
+	};
 };
-gettokenHandle();
-
 const msgList = computed(() => {
 	return mainStore.messageList;
 });
@@ -156,26 +116,28 @@ watch(
 );
 const callVoice = () => {
 	actionShow.value = true;
-	if (mainStore.platform === 0) {
-		showToast({
-			message: "PC端暂不支持语音转写",
-			position: "top",
-		});
-	}
 };
 const keywords = ref("");
-const onSearch = async () => {
+const onSearch = () => {
 	if (keywords.value.trim() == "") {
 		return (keywords.value = "");
 	}
 	mainStore.pushMessage({ type: 1, msg: keywords.value });
-	try {
-		const res = await getContent({ index: keywords.value });
-		if (res.status == 200 && res.data?.code == 0) {
-			mainStore.pushMessage({ type: 2, msg: res.data.data });
-		}
-	} catch (error) {}
-	keywords.value = "";
+	getContent({ index: keywords.value })
+		.then((res) => {
+			if (res?.data?.code == 0) {
+				mainStore.pushMessage({
+					type: 2,
+					msg: res.data.data,
+				});
+			}
+		})
+		.catch((err) => {
+			console.log(err);
+		})
+		.finally(() => {
+			keywords.value = "";
+		});
 };
 const openUrl = (item) => {
 	if (item.type !== 1) {
@@ -195,80 +157,199 @@ const callKeyboard = () => {
 	input.focus();
 };
 const isMouseDown = ref(false);
+const record = ref("");
+const init = (rec) => {
+	record.value = rec;
+};
+function Recorder(stream) {
+	var sampleBits = 16; //输出采样数位 8, 16
+	var sampleRate = 1600; //输出采样率
+	var context = new AudioContext();
+	var audioInput = context.createMediaStreamSource(stream);
+	var recorder = context.createScriptProcessor(4096, 1, 1);
+	var audioData = {
+		size: 0, //录音文件长度
+		buffer: [], //录音缓存
+		inputSampleRate: 4800, //输入采样率
+		inputSampleBits: 16, //输入采样数位 8, 16
+		outputSampleRate: sampleRate, //输出采样数位
+		oututSampleBits: sampleBits, //输出采样率
+		clear: function () {
+			this.buffer = [];
+			this.size = 0;
+		},
+		input: function (data) {
+			this.buffer.push(new Float32Array(data));
+			this.size += data.length;
+		},
+		compress: function () {
+			//合并压缩
+			//合并
+			var data = new Float32Array(this.size);
+			var offset = 0;
+			for (var i = 0; i < this.buffer.length; i++) {
+				data.set(this.buffer[i], offset);
+				offset += this.buffer[i].length;
+			}
+			//压缩
+			var compression = parseInt(
+				this.inputSampleRate / this.outputSampleRate
+			);
+			var length = data.length / compression;
+			var result = new Float32Array(length);
+			var index = 0,
+				j = 0;
+			while (index < length) {
+				result[index] = data[j];
+				j += compression;
+				index++;
+			}
+			return result;
+		},
+		encodePCM: function () {
+			//这里不对采集到的数据进行其他格式处理，如有需要均交给服务器端处理。
+			var sampleRate = Math.min(
+				this.inputSampleRate,
+				this.outputSampleRate
+			);
+			var sampleBits = Math.min(
+				this.inputSampleBits,
+				this.oututSampleBits
+			);
+			var bytes = this.compress();
+			var dataLength = bytes.length * (sampleBits / 8);
+			var buffer = new ArrayBuffer(dataLength);
+			var data = new DataView(buffer);
+			var offset = 0;
+			for (var i = 0; i < bytes.length; i++, offset += 2) {
+				var s = Math.max(-1, Math.min(1, bytes[i]));
+				data.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+			}
+			return new Blob([data]);
+		},
+	};
+	var sendData = function () {
+		//对以获取的数据进行处理(分包)
+		var reader = new FileReader();
+		reader.onload = (e) => {
+			var outbuffer = e.target.result;
+			var arr = new Int8Array(outbuffer);
+			if (arr.length > 0) {
+				var tmparr = new Int8Array(1024);
+				var j = 0;
+				for (var i = 0; i < arr.byteLength; i++) {
+					tmparr[j++] = arr[i];
+					if ((i + 1) % 1024 == 0) {
+						ws.value.send(tmparr);
+						if (arr.byteLength - i - 1 >= 1024) {
+							tmparr = new Int8Array(1024);
+						} else {
+							tmparr = new Int8Array(arr.byteLength - i - 1);
+						}
+						j = 0;
+					}
+					if (i + 1 == arr.byteLength && (i + 1) % 1024 != 0) {
+						ws.value.send(tmparr);
+					}
+				}
+			}
+		};
+		reader.readAsArrayBuffer(audioData.encodePCM());
+		// console.log(audioData);
+		audioData.clear(); //每次发送完成则清理掉旧数据
+	};
+	this.start = function () {
+		audioInput.connect(recorder);
+		recorder.connect(context.destination);
+	};
+	this.stop = function () {
+		recorder.disconnect();
+	};
+	this.getBlob = function () {
+		return audioData.encodePCM();
+	};
+	this.clear = function () {
+		audioData.clear();
+	};
+	recorder.onaudioprocess = function (e) {
+		var inputBuffer = e.inputBuffer.getChannelData(0);
+		audioData.input(inputBuffer);
+		sendData();
+	};
+}
 const start = () => {
 	isMouseDown.value = true;
-	//开始调用钉钉API
-	dd.ready(function () {
-		dd.device.audio.startRecord({
-			maxDuration: 60,
-			onSuccess: function (res) {
-				// 调用成功时回调
-				// console.log("调用成功", JSON.stringify(res));
+	navigator.getUserMedia =
+		navigator.getUserMedia || navigator.webkitGetUserMedia;
+	if (!navigator.getUserMedia) {
+		alert("浏览器不支持音频输入");
+	} else {
+		navigator.getUserMedia(
+			{
+				audio: true,
 			},
-			onFail: function (err) {
-				// 调用失败时回调
-				showToast({
-					message: "调用开始录音API失败",
-					position: "top",
-				});
+			function (mediaStream) {
+				const res = new Recorder(mediaStream);
+				init(res);
+				console.log("开始对讲");
+				useWebSocket();
 			},
-		});
-	});
+			function (error) {
+				console.log(error);
+				switch (error.message || error.name) {
+					case "PERMISSION_DENIED":
+					case "PermissionDeniedError":
+						console.info("用户拒绝提供信息。");
+						break;
+					case "NOT_SUPPORTED_ERROR":
+					case "NotSupportedError":
+						console.info("浏览器不支持硬件设备。");
+						break;
+					case "MANDATORY_UNSATISFIED_ERROR":
+					case "MandatoryUnsatisfiedError":
+						console.info("无法发现指定的硬件设备。");
+						break;
+					default:
+						console.info(
+							"无法打开麦克风。异常信息:" +
+								(error.code || error.name)
+						);
+						break;
+				}
+			}
+		);
+	}
 };
+const word = ref("");
 const stop = () => {
 	isMouseDown.value = false;
 	actionShow.value = false;
-	dd.ready(function () {
-		mainStore.pushMessage({ type: 1, msg: "" });
-		dd.device.audio.stopRecord({
-			onSuccess: function (res) {
-				// 调用成功时回调
-				dd.device.audio.translateVoice({
-					mediaId: res.mediaId,
-					duration: res.duration,
-					onSuccess: async function (result) {
-						// 调用成功时回调
-						const content = result.content;
-						if (content.includes("无内容")) {
-							mainStore.popMessage();
-							return showToast({
-								message: "未识别到内容",
-								position: "top",
-							});
-						}
-						const worlds = content.slice(0, content.length - 1);
-						mainStore.popMessage();
-						mainStore.pushMessage({ type: 1, msg: worlds });
-						try {
-							const res = await getContent({
-								index: worlds,
-							});
-							if (res.status == 200 && res.data?.code == 0) {
-								mainStore.pushMessage({
-									type: 2,
-									msg: res.data.data,
-								});
-							}
-						} catch (error) {}
-					},
-					onFail: function (err) {
-						mainStore.popMessage();
-						showToast({
-							message: "调用语音转文字API失败",
-							position: "top",
+	if (ws.value) {
+		console.log(arrs.value, "arrs");
+		ws.value.close();
+		record.value.stop();
+		if (arrs.value) {
+			arrs.value.forEach((element) => {
+				word.value += element.cw[0].w;
+			});
+			mainStore.pushMessage({ type: 1, msg: word.value });
+			getContent({ index: word.value })
+				.then((res) => {
+					if (res?.data?.code == 0) {
+						mainStore.pushMessage({
+							type: 2,
+							msg: res.data.data,
 						});
-					},
+					}
+				})
+				.catch((err) => {
+					console.log(err);
+				})
+				.finally(() => {
+					word.value = "";
 				});
-			},
-			onFail: function (err) {
-				mainStore.popMessage();
-				showToast({
-					message: "调用停止录音API失败",
-					position: "top",
-				});
-			},
-		});
-	});
+		}
+	}
 };
 </script>
 <style scoped>
@@ -370,10 +451,12 @@ const stop = () => {
 .voiceButton {
 	width: 120px;
 	height: 40px;
+	text-align: center;
+	font-size: 20px;
+	line-height: 40px;
+	color: #ffffff;
 	border-radius: 20px;
-	background: #1296db url(../assets/img/voicepress.png) no-repeat center
-		center;
-	background-size: 30px;
 	margin-left: 50px;
+	background-color: #006ffd;
 }
 </style>
